@@ -1,0 +1,412 @@
+---
+title: "HW3"
+author: "Chang Du"
+date: "4/24/2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r}
+rm(list = ls())
+getwd()  # returns current working directory
+setwd("/Users/duchang/NYU CUSP/Text as Data/HW3")  # set working directory
+```
+
+```{r}
+library(quanteda)
+library(quanteda.corpora)
+library(topicmodels)
+library(lda)
+library(stm)
+library(ggplot2)
+library(proxy)
+library(dplyr)
+library(tidyr)
+library(tidytext)
+library(stringr)
+library(bursts)
+library(readtext)
+library(factoextra)
+library(lsa)
+library(text2vec)
+library(lubridate)
+libraries <- c("ldatuning","rjson", "lubridate", "parallel", "doParallel","stringi")
+```
+
+### 1.
+### 1.(a)
+```{r}
+# Create a subset of data corpus immigrationnews that only contains articles from the following news sources: telegraph, guardian, ft, times and sun.
+immigrationnews <- corpus(data_corpus_immigrationnews)
+corpus_immigrationnews_subset <- corpus_subset(immigrationnews, paperName %in% c('telegraph', 'guardian', 'ft', 'times', 'sun'))
+# docvars(corpus_immigrationnews_subset) show the result
+
+# Create a table that shows how many documents are associated with each newspaper.
+counts_doc <- aggregate(texts ~ paperName, data=as.data.frame(corpus_immigrationnews_subset$documents), FUN=length)
+counts_doc
+```
+
+### 1.(b) the remaining number of features is 2776 and the total number of documents in the DFM is 1739.
+```{r}
+load("custom_stopwords.RData")
+immigrationnews_dfm <- dfm(corpus_immigrationnews_subset, remove_punct=TRUE, remove_numbers = TRUE, tolower=TRUE, remove=custom_stopwords, stem=TRUE)
+immigrationnews_dfm <- dfm_trim(immigrationnews_dfm, min_termfreq=30, min_docfreq=20)
+
+# number of features
+nfeat(immigrationnews_dfm)
+# number of documents
+ndoc(immigrationnews_dfm)
+```
+
+### 1.(c) Removing rare terms from a dfm on which will fit a topic model is very useful for improving efficiency, because it can greatly reduce the size of the vocabulary, but it can also improve accuracy.
+
+### 1.(d) The @loglikelihood of immigration news topic model is -2575792.
+```{r}
+# fit immigration news topic model
+immigrationnews_tm <- LDA(immigrationnews_dfm, k = 30, method = "Gibbs", iter=3000, control = list(seed = 10012))
+immigrationnews_tm@loglikelihood
+```
+### 1.(e)
+- 2: employment, because there are many employ-related words like employ, job, work, elite, hire
+- 12: migration, because there are immigration-related words like 'migrat', 'arrive' and many statistic words to describe the migration details
+- 15: law, many words like 'court', 'judge', 'legal'
+- 28: ukip_election, because words in this topic is about election and ukip
+- 30: Nigel_Farage, because other words are about this person.
+
+```{r}
+# the top 10 words that contribute the most to each topic, overall 30 topics
+topics_top10_words<- get_terms(immigrationnews_tm, k=10)
+topics_top10_words
+
+# the most likely topic for each document
+topics(immigrationnews_tm)
+
+# Rank topics according to the number of documents for which they are the most likely topic
+# Store the results of the mixture of documents over topics
+immigrationnews_topics<-immigrationnews_tm@gamma
+# Transpose the data
+immigrationnews_topics <- t(immigrationnews_topics)
+# find largest value 
+max<-apply(immigrationnews_topics, 2, which.max)
+top_topics <- sort(table(max),decreasing=TRUE)
+top_topics
+# label the top five: 30 28 12 2 15
+# get_terms(immigrationnews_tm, k=100) to see the top words for these five topics
+```
+### 1(f) There are many overlaps of the top two topics points in the two plots. The two papers 'sun' and 'times' has different topics which are covered more frequently. In paper 'Sun', the topic 4 was discussed most frequently. In paper 'times', topic 30 was involved more times. Besides, the topics are more focus on several specific topics in 'sun', however, the topics are more scattered in paper 'times'.
+```{r}
+# the topics that contribute the most to each document
+k <- 30
+max<-apply(immigrationnews_topics, 2, which.max)
+sort(table(max),decreasing=TRUE)
+# Write a function that finds the second max
+which.max2 <- function(x){
+  which(x == sort(x,partial=(k-1))[k-1])
+}
+
+max2 <- apply(immigrationnews_topics, 2, which.max2)
+max2 <- sapply(max2, max)
+
+# Combine data
+top2 <- data.frame(id = corpus_immigrationnews_subset$documents$id, paper = corpus_immigrationnews_subset$documents$paperName, top_topic = max,  second_topic = max2, day = corpus_immigrationnews_subset$documents$day)
+
+# subset Sun
+Sun <- top2[top2$paper == "sun" ,]
+#order by day 
+Sun$day <- as.numeric(Sun$day)
+Sun <- Sun[with(Sun, order(Sun$day, decreasing=FALSE)) ,]
+# plot Sun terms 
+Sun_plot <- ggplot(Sun, aes(x=day, y=top_topic, pch="First")) 
+Sun_plot + geom_point(aes(x=day, y=second_topic, pch="Second") ) +theme_bw() + 
+  ylab("Topic Number") + ggtitle("Sun: Top News Topics per Day") + geom_point() + xlab(NULL) + 
+  scale_shape_manual(values=c(19, 1), name = "Topic Rank") 
+
+# subset Time
+Time <- top2[top2$paper == "times" ,]
+# order by day 
+Time$day <- as.numeric(Time$day)
+Time <- Time[with(Time, order(Time$day, decreasing=FALSE)) ,]
+# plot Times terms 
+Time_plot <- ggplot(Time, aes(x=day, y=top_topic, pch="First"))
+Time_plot + geom_point(aes(x=day, y=second_topic, pch="Second") ) +theme_bw() + 
+  ylab("Topic Number") + ggtitle("Times: Top News Topics per Day") + geom_point() + xlab(NULL) + 
+  scale_shape_manual(values=c(18, 1), name = "Topic Rank") 
+```
+
+### 1.(g)
+- ft covered topic 12 which is about migration most
+- guardian covered the election of ukip most
+- sun covered migration topics most
+- telegraph covered migration most
+- times covered Nigel Farage most
+- we can see migration is a hot topic
+```{r}
+# gamma
+topics_df <- data.frame(t(data.frame(immigrationnews_topics)))
+names(topics_df) <- seq(1:ncol(topics_df))
+topics_df$paper <- top2$paper
+top5_contrib <- aggregate(cbind(topics_df$'30', topics_df$'28', topics_df$'12', topics_df$'2', topics_df$'15') ~ paper, data=topics_df, FUN=mean)
+names(top5_contrib) <- c('paper', '30:Nigel_Farage', '28:ukip_election', '12:migration', '2:employment', '15:law')
+top5_contrib
+```
+
+### 2. Topic stability: We want to see how stable these topics are, under two different topic parameter values.
+### 2.(a) The @loglikelihood of immigration news topic model with new seed is -2581962.
+```{r}
+# rerun with different seed
+# fit immigration news topic model
+immigrationnews_tm_2 <- LDA(immigrationnews_dfm, k = 30, method = "Gibbs", iter=3000, control = list(seed = 10066))
+immigrationnews_tm_2@loglikelihood
+```
+### 2. (b)
+```{r}
+# For each topic in the new model, find the topic that is the closest match in the original run in terms of cosine similarity of the topic distribution over words. Your answer should be a table.
+
+# beta = topic distribution over words
+# V1: the previous model, match_max: the new model
+similarity <- simil(immigrationnews_tm@beta, immigrationnews_tm_2@beta, method = 'cosine')
+match_max <- apply(similarity,1, which.max)
+match_topics <- as.data.frame(cbind(seq(1:nrow(similarity)), match_max))
+match_topics
+```
+### 2. (c)
+```{r}
+as.data.frame(topics_top10_words)
+topics_top10_words_2<- get_terms(immigrationnews_tm_2, k=10)
+as.data.frame(topics_top10_words_2)
+shared_words_num=0
+for (i in 1:nrow(match_topics)) {
+   topic_number = as.numeric(match_topics$V1[i])
+   top10_words = topics_top10_words[, topic_number]
+   matched_topic_number = as.numeric(match_topics$match_max[i])
+   top10_words_new = topics_top10_words_2[, matched_topic_number]
+   shared_words_num[i] = length(intersect(top10_words, top10_words_new))
+}
+match_topics$shared_words_num <- shared_words_num
+match_topics$avg_shared_words <- shared_words_num/10
+match_topics
+```
+
+### 2. (d) Compared to the models with 5 topics, the models with 30 topics is more stable. The average number of shared words in each matched topic pair is more stable in model with 30 topics.The average of numer of shared words is 6.7, the results are all around 6.7 except 3 and 10. So the topic model with more topics is more stable, its std of shared words number is smaller.
+```{r}
+tm_3 <- LDA(immigrationnews_dfm, k = 5, method = "Gibbs", iter=3000, control = list(seed = 10012))
+tm_3@loglikelihood
+
+tm_4 <- LDA(immigrationnews_dfm, k = 5, method = "Gibbs", iter=3000, control = list(seed = 10066))
+tm_4@loglikelihood
+
+similarity_new <- simil(tm_3@beta, tm_4@beta, method = 'cosine')
+match_max_new <- apply(similarity_new,1, which.max)
+match_topics_new<- as.data.frame(cbind(seq(1:nrow(similarity_new)), match_max_new))
+# match_topics_new
+
+topics_top10_words_3 <- get_terms(tm_3, k=10)
+as.data.frame(topics_top10_words_3)
+topics_top10_words_4 <- get_terms(tm_4, k=10)
+as.data.frame(topics_top10_words_4)
+
+shared_words_num_2=0
+for (i in 1:nrow(match_topics_new)) {
+   topic_number_2 = as.numeric(match_topics_new$V1[i])
+   top10_words_2 = topics_top10_words_3[, topic_number_2]
+   matched_topic_number_2 = as.numeric(match_topics_new$match_max_new[i])
+   top10_words_new_2 = topics_top10_words_4[, matched_topic_number_2]
+   
+   shared_words_num_2[i] = length(intersect(top10_words_2, top10_words_new_2))
+}
+match_topics_new$shared_words_num_2 <- shared_words_num_2
+match_topics_new$avg_shared_words <- shared_words_num_2/5
+match_topics_new
+```
+### 3.
+### 3.(a) Discuss your preprocessing choice: In the preprocessing, I remove the punctuations, numbers, and stopwords, transfer the words to lower, stemmed the words. The numbers are not important in a topic model.
+```{r}
+immigrationnews <- corpus(data_corpus_immigrationnews)
+# Using only articles from the Sun and Times, construct a numeric date variable from the "day" variable in the immigration news corpus.
+corpus_news_subset <- corpus_subset(immigrationnews, paperName %in% c('times', 'sun'))
+date <- as.numeric(corpus_news_subset$documents$day)
+
+# preprocessing
+#dfm
+stm_dfm <- dfm(corpus_news_subset, remove_punct=TRUE, remove_numbers = TRUE, tolower=TRUE, remove=custom_stopwords, stem=TRUE)
+stm_dfm <- dfm_trim(stm_dfm, min_termfreq=30, min_docfreq=20)
+
+```
+
+### 3.(b) The number of topics selected in the fitted model is 59. Also report the number of iterations completed before the model converged is 47.
+```{r}
+#df
+stm_df <- as.data.frame(cbind(corpus_news_subset$documents$texts, corpus_news_subset$documents$day, corpus_news_subset$documents$paperName))
+names(stm_df) <- c("texts", "day", "paperName")
+stm_df$paperName <- as.factor(stm_df$paperName)
+stm_df$day <- date
+stm_df$texts <- as.character(stm_df$texts)
+
+news_stm <- stm(stm_dfm, K=0, init.type='Spectral', seed=100, prevalence =~paperName + s(day), data=stm_df)
+```
+### 3.(c) According to the top topics plot, the 5 topics with highest proportion of documents are topic 21, 57, 58, 1, 45.
+- 21: news
+- 57: uk
+- 58: migration
+- 1: ukip_election
+- 45: uk_migrantion
+```{r}
+plot_summary <- plot(news_stm, type='summary')
+```
+### 3.(d) Choose Topic 21 which occur in the highest proportion of documents. According to the first plot, we can the that the 'Sun' covered topic 21 'news' more, compared to 'Times', with a covaiance of 0.065. According to the second plot, we can see that prevalence of topic 21 'news' was decreased as time goes by.
+```{r}
+# How does the content vary with the paper discussing that topic?
+# Plots the Difference in coverage of the topics according to different paper sun and times
+paper <- estimateEffect(c(21) ~ paperName, news_stm, meta=stm_df)
+plot(paper, "paperName", model = news_stm,
+     method = "difference", cov.value1 = "sun", cov.value2 = "times")
+
+# How does the prevalence change over time?
+# Plots the distribution of topics over time
+time <- estimateEffect(c(21) ~ day, news_stm, meta=stm_df)
+plot(time, "day", news_stm, method="continuous", xaxt = "n", xlab="Day")
+
+```
+### 4.
+### 4.(a)
+```{r}
+# create a corpus subset of the data corpus ukmanifestos that contains only speeches by the Conservative (`Con') and Labor (`Lab') parties
+ukmanifestos <- data_corpus_ukmanifestos
+uk_corpus_subset <- corpus_subset(ukmanifestos, Party %in% c('Con', 'Lab'))
+uk_dfm <- dfm(uk_corpus_subset, remove_punct=TRUE, tolower=TRUE, remove = stopwords('english'), stem=TRUE)
+```
+
+### 4.(b) 
+```{r}
+corpus_index <- data.frame(uk_corpus_subset$documents)
+
+# index of 1979 Labor manifesto
+idx_1979_labor <- which(corpus_index$Party == "Lab" & corpus_index$Year == "1979")
+# index of 1979 Conservative manifesto
+idx_1979_con <- which(corpus_index$Party == "Con" & corpus_index$Year == "1979")
+
+# dir = c(index of 1979 Labor manifesto, index of 1979 Conservative manifesto)
+uk_wf <- textmodel_wordfish(uk_dfm, c(idx_1979_labor, idx_1979_con))
+summary(uk_wf)
+
+```
+### 4.(c) The most left wing document is Conservative's manifesto in 2005, the most right wing document is Conservative's manifesto in 1974. The most left wing manifesto is from party Conservative is surprising, because party Labor is more likely to be classified to left wing. However, it might can be explained by that the wordfish model doesn't include details about how they expressed and delivered the manifesto, it only includes the contents in the manifesto.
+```{r}
+uk_wf_df <- data.frame(cbind(uk_wf$theta, corpus_index$Party, corpus_index$Year))
+uk_wf_df
+
+most_left_manifesto <- uk_wf_df[which.max(uk_wf_df$X1),]
+most_right_manifesto <- uk_wf_df[which.min(uk_wf_df$X1),]
+
+most_left_manifesto
+most_right_manifesto
+```
+### 4.(d) It plot the weights (beta, estimated feature marginal effects) by word frequencies (psi) for each word. The x-label is weights, y-label is word frequencies (estimated word fixed effects). 
+```{r}
+# most important features--word fixed effects
+words <- uk_wf$psi # values
+names(words) <- uk_wf$features # the words
+sort(words)[1:50]
+sort(words, decreasing=T)[1:50]
+
+# Guitar plot
+weights <- uk_wf$beta
+plot(weights, words)
+```
+### 4.(e) P-value is 0.7227, which means the the result is not significant. So there is no significant linear relationship between the theta from wordfish model and the party of a manifesto.
+```{r}
+uk_wf_df$Party <- uk_corpus_subset$documents$Party
+uk_wf_df$Party <- ifelse(uk_wf_df$Party == "Lab", 1, 0)
+fit <- lm(uk_wf$theta ~ Party, data=uk_wf_df)
+summary(fit)
+```
+### 5.
+- 'trump': this word's use bursted between U.S. election dates and during the period of important speeches.
+- 'korea': The president of north Korea meeting with the president of south Korea in April, May, September 2018. The south Korea president visited pyongyang on September, 2017.
+- 'afghanistan': negotiate with Taliban, exploxure.
+```{r}
+# Loading bursty function: a repurposing of some guts of kleinberg()
+bursty <- function(word = "sioux", DTM, date) {
+  word.vec <- DTM[, which(colnames(DTM) == word)]
+  if(length(word.vec) == 0) {
+    print(word, " does not exist in this corpus.")
+  } 
+  else {
+    word.times <- c(0,which(as.vector(word.vec)>0))
+    
+    kl <- kleinberg(word.times, gamma = 0.5)
+    kl$start <- date[kl$start+1]
+    kl$end <- date[kl$end]
+    max_level <- max(kl$level)
+    
+    plot(c(kl$start[1], kl$end[1]), c(1,max_level),
+         type = "n", xlab = "Time", ylab = "Level", bty = "n",
+         xlim = c(kl$start[1], kl$end[1]), ylim = c(1, max_level),
+         yaxt = "n")
+    axis(2, at = 1:max_level)
+    
+    for (i in 1:nrow(kl)) {
+      if (kl$start[i] != kl$end[i]) {
+        arrows(kl$start[i], kl$level[i], kl$end[i], kl$level[i], code = 3, angle = 90,
+               length = 0.05)
+      } 
+      else {
+        points(kl$start[i], kl$level[i])
+      }
+    }
+    
+    print(kl)
+  }
+    #note deviation from standard defaults bec don't have that much data
+}
+
+news_data <- readRDS("news_data.rds")
+news_data_corpus <- corpus(news_data, text_field = 'headline')
+docvars(news_data_corpus)$date <- as.Date(as.character(docvars(news_data_corpus)$date))
+news_dfm <- dfm(news_data_corpus)
+
+bursty("trump", news_dfm, docvars(news_data_corpus)$date)
+bursty("korea", news_dfm, docvars(news_data_corpus)$date)
+bursty("afghanistan", news_dfm, docvars(news_data_corpus)$date)
+```
+### 6.
+### 6.(a) The top 5 with the most positive loadings are riz, ahm, mindi, kale, aziz and the top 5 with the most negative loadings are trump, bernard-henri, lévi, bernard-kouchn, rushdi. The first principal component is not  interpretable. 
+```{r}
+news_dfm <- dfm(news_data_corpus, remove_punct=TRUE, tolower=TRUE, remove = stopwords('english'), stem=TRUE)
+news_mat <- convert(news_dfm, to = "matrix") # convert to matrix
+news_pca <- prcomp(news_mat, center = TRUE, scale = TRUE)
+
+news_pca$rotation[1:10, 1:5]
+
+words_pc1 <- sort(news_pca$rotation[,1], decreasing = T)
+words_pc1_increasing <- sort(news_pca$rotation[,1])
+top5_positive_words <- words_pc1[1:5]
+top5_negative_words <- words_pc1_increasing[1:5]
+top5_positive_words
+top5_negative_words
+```
+### 6.(b) the 5 nearest tokens to 'korea' is north, south, nuclear, missil, talk, and the 5 nearest tokens to 'corruption' is brazil, charg, ex-presid, disrupt ex-italian. According to these results, the model do a good job of capturing the 'meaning'. The nearest words make sense. The nuclear and missile problem is under heated discussion and the conflicts between north and south korea is also a hot topic. The former president of Brazil was involved in corruption.
+```{r}
+news_mat_lsa <- convert(news_dfm, to = "lsa") # terms are rows and columns are documents = TDM
+news_mat_lsa <- lw_logtf(news_mat_lsa) * gw_idf(news_mat_lsa)
+#news_mat_lsa
+
+associate(news_mat_lsa, "korea", "cosine", threshold = .2)[1:5]
+associate(news_mat_lsa, "corrupt", "cosine", threshold = .2)[1:5]
+```
+
+### 6.(c) The nearest neighbors to 'korea' are "korean", "pyongyang", "seoul", "dprk", "koreans" and 'corruption''s nearest neighbors are "graft", "bribery", "corrupt", "allegations", "scandals". It make sense, these words are related to our target words, but the performance of LSA is better. These embeddings not stemmed, so the 'korea' has neighbors like 'korean' and 'koreans', it makes the results not accurate.
+```{r}
+pretrained <- readRDS("pretrained.rds")
+
+# function to compute nearest neighbors
+nearest_neighbors <- function(cue, embeds, N = 5, norm = "l2"){
+  cos_sim <- sim2(x = embeds, y = embeds[cue, , drop = FALSE], method = "cosine", norm = norm)
+  nn <- cos_sim <- cos_sim[order(-cos_sim),]
+  return(names(nn)[2:(N + 1)])  # cue is always the nearest neighbor hence dropped
+}
+
+nearest_neighbors("korea", pretrained, N = 5, norm = "l2")
+nearest_neighbors("corruption", pretrained, N = 5, norm = "l2")
+```
